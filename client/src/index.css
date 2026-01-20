@@ -175,6 +175,25 @@
   }
 }
 
+/* Ensure dialogs/modals appear above Leaflet map */
+[data-radix-dialog-overlay],
+[data-radix-dialog-content] {
+  z-index: 10000 !important;
+}
+
+/* Leaflet map z-index management */
+.leaflet-container {
+  z-index: 1;
+}
+
+.leaflet-pane {
+  z-index: 1;
+}
+
+.leaflet-control {
+  z-index: 100;
+}
+
 /**
  * Using the elevate system.
  * Automatic contrast adjustment.
