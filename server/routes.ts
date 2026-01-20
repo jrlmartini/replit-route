@@ -284,6 +284,11 @@ export async function registerRoutes(
         },
         body: JSON.stringify({
           coordinates,
+          alternative_routes: {
+            target_count: 3,
+            weight_factor: 1.6,
+            share_factor: 0.6,
+          },
         }),
       });
 

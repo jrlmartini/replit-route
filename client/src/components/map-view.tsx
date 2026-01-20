@@ -49,6 +49,7 @@ interface MapViewProps {
   filteredCustomerIds: Set<string>;
   isochronePolygon: GeoJSON.Feature<GeoJSON.Polygon> | null;
   route: GeoJSON.Feature<GeoJSON.LineString> | null;
+  alternativeRoutes: GeoJSON.Feature<GeoJSON.LineString>[];
   corridorPolygon: GeoJSON.Feature<GeoJSON.Polygon> | null;
   showCustomers: boolean;
   isochroneOrigin: { lat: number; lon: number } | null;
@@ -68,6 +69,7 @@ export function MapView({
   filteredCustomerIds,
   isochronePolygon,
   route,
+  alternativeRoutes,
   corridorPolygon,
   showCustomers,
   isochroneOrigin,
@@ -86,6 +88,7 @@ export function MapView({
   const clusterGroupRef = useRef<any>(null);
   const isochroneLayerRef = useRef<L.GeoJSON | null>(null);
   const routeLayerRef = useRef<L.GeoJSON | null>(null);
+  const altRoutesLayerRef = useRef<L.GeoJSON[]>([]);
   const corridorLayerRef = useRef<L.GeoJSON | null>(null);
   const originMarkerRef = useRef<L.Marker | null>(null);
   const destinationMarkerRef = useRef<L.Marker | null>(null);
@@ -244,15 +247,41 @@ export function MapView({
     }
   }, [isochronePolygon]);
 
-  // Update route
+  // Update route and alternative routes
   useEffect(() => {
     if (!mapRef.current) return;
 
+    // Clear existing route layers
     if (routeLayerRef.current) {
       mapRef.current.removeLayer(routeLayerRef.current);
       routeLayerRef.current = null;
     }
+    
+    // Clear existing alternative route layers
+    altRoutesLayerRef.current.forEach(layer => {
+      mapRef.current!.removeLayer(layer);
+    });
+    altRoutesLayerRef.current = [];
 
+    // Add alternative routes first (so they appear behind main route)
+    if (alternativeRoutes && alternativeRoutes.length > 0) {
+      alternativeRoutes.forEach((altRoute, index) => {
+        const layer = L.geoJSON(altRoute, {
+          style: {
+            color: "hsl(270, 65%, 60%)",
+            weight: 3,
+            opacity: 0.5,
+            dashArray: "8, 8",
+          },
+        }).addTo(mapRef.current!);
+        
+        // Add popup to identify the alternative route
+        layer.bindPopup(`Rota alternativa ${index + 1}`);
+        altRoutesLayerRef.current.push(layer);
+      });
+    }
+
+    // Add main route on top
     if (route) {
       routeLayerRef.current = L.geoJSON(route, {
         style: {
@@ -261,8 +290,10 @@ export function MapView({
           opacity: 0.9,
         },
       }).addTo(mapRef.current);
+      
+      routeLayerRef.current.bindPopup("Rota principal");
     }
-  }, [route]);
+  }, [route, alternativeRoutes]);
 
   // Update corridor polygon
   useEffect(() => {

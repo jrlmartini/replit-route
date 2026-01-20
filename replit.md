@@ -48,6 +48,12 @@ Preferred communication style: Simple, everyday language.
 - **Distance Mode**: Creates buffer corridor around route by specified kilometers
 - **Time Mode**: Generates isochrones at sample points along the route, creates unified corridor by travel time
 
+### Alternative Routes
+- The directions API now requests up to 3 alternative routes
+- All routes (main + alternatives) are used to generate the corridor polygon
+- Main route displayed as solid purple line
+- Alternative routes displayed as dashed, lighter purple lines with lower opacity
+
 ### Key Design Patterns
 - **Shared Types**: Schema definitions in `shared/` are used by both client and server
 - **API Rate Limiting**: Built-in rate limiter for external API calls (1 request/second)

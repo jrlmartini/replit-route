@@ -31,6 +31,7 @@ export interface CorridorState {
   widthKm: number;
   timeMinutes: number;
   route: GeoJSON.Feature<GeoJSON.LineString> | null;
+  alternativeRoutes: GeoJSON.Feature<GeoJSON.LineString>[];
   corridor: GeoJSON.Feature<GeoJSON.Polygon> | null;
   isComputing: boolean;
 }
@@ -74,6 +75,7 @@ export default function Home() {
     widthKm: 10,
     timeMinutes: 15,
     route: null,
+    alternativeRoutes: [],
     corridor: null,
     isComputing: false,
   });
@@ -239,15 +241,57 @@ export default function Home() {
       const data = await response.json();
 
       if (data.features && data.features.length > 0) {
-        const route = data.features[0] as GeoJSON.Feature<GeoJSON.LineString>;
+        // Main route is the first one, alternatives follow
+        const allRoutes = data.features as GeoJSON.Feature<GeoJSON.LineString>[];
+        const route = allRoutes[0];
+        const alternativeRoutes = allRoutes.slice(1);
         
         let corridor: GeoJSON.Feature<GeoJSON.Polygon>;
         let corridorDescription: string;
 
         if (corridorState.mode === "distance") {
-          // Create corridor buffer by distance
-          const buffered = turf.buffer(route, corridorState.widthKm, { units: "kilometers" });
-          corridor = buffered as GeoJSON.Feature<GeoJSON.Polygon>;
+          // Create corridor buffer by distance - using all routes
+          const buffers: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
+          
+          for (const r of allRoutes) {
+            const buffered = turf.buffer(r, corridorState.widthKm, { units: "kilometers" });
+            if (buffered) {
+              buffers.push(buffered as GeoJSON.Feature<GeoJSON.Polygon>);
+            }
+          }
+          
+          // Union all buffers into one corridor
+          if (buffers.length === 1) {
+            corridor = buffers[0];
+          } else {
+            let united: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> = buffers[0];
+            for (let i = 1; i < buffers.length; i++) {
+              try {
+                const union = turf.union(turf.featureCollection([united as GeoJSON.Feature<GeoJSON.Polygon>, buffers[i]]));
+                if (union) {
+                  united = union as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
+                }
+              } catch {
+                console.error("Failed to union route buffers");
+              }
+            }
+            
+            // Convert MultiPolygon to single polygon via convex hull if needed
+            if (united.geometry.type === "MultiPolygon") {
+              const allCoords: number[][] = [];
+              for (const polyCoords of united.geometry.coordinates) {
+                for (const ring of polyCoords) {
+                  allCoords.push(...ring);
+                }
+              }
+              const points = turf.multiPoint(allCoords as [number, number][]);
+              const hull = turf.convex(points);
+              corridor = hull ? hull as GeoJSON.Feature<GeoJSON.Polygon> : buffers[0];
+            } else {
+              corridor = united as GeoJSON.Feature<GeoJSON.Polygon>;
+            }
+          }
+          
           corridorDescription = `corredor de ${corridorState.widthKm}km`;
         } else {
           // Create corridor by time - generate isochrones along the route
@@ -332,7 +376,7 @@ export default function Home() {
           corridorDescription = `corredor de ${corridorState.timeMinutes} minutos`;
         }
 
-        setCorridorState(prev => ({ ...prev, route, corridor, isComputing: false }));
+        setCorridorState(prev => ({ ...prev, route, alternativeRoutes, corridor, isComputing: false }));
 
         // Filter customers inside corridor and calculate distances
         const insideIds = new Set<string>();
@@ -557,6 +601,7 @@ export default function Home() {
           filteredCustomerIds={filteredCustomerIds}
           isochronePolygon={layerVisibility.isochrone ? isochroneState.polygon : null}
           route={layerVisibility.route ? corridorState.route : null}
+          alternativeRoutes={layerVisibility.route ? corridorState.alternativeRoutes : []}
           corridorPolygon={layerVisibility.corridor ? corridorState.corridor : null}
           showCustomers={layerVisibility.customers}
           isochroneOrigin={isochroneState.origin}
