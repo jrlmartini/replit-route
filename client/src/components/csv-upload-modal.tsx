@@ -181,10 +181,11 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
 
         {/* Upload Step */}
         {step === "upload" && (
-          <div
+          <label
+            htmlFor="csv-upload"
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleFileDrop}
-            className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
+            className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer block"
             data-testid="csv-dropzone"
           >
             <input
@@ -193,17 +194,16 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
               onChange={handleFileSelect}
               className="hidden"
               id="csv-upload"
+              data-testid="input-csv-file"
             />
-            <label htmlFor="csv-upload" className="cursor-pointer">
-              <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-4" />
-              <p className="text-sm font-medium mb-1">
-                Arraste o arquivo CSV ou clique para selecionar
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Colunas esperadas: nome, cidade
-              </p>
-            </label>
-          </div>
+            <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-4" />
+            <p className="text-sm font-medium mb-1">
+              Arraste o arquivo CSV ou clique para selecionar
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Colunas esperadas: nome, cidade
+            </p>
+          </label>
         )}
 
         {/* Mapping Step */}
