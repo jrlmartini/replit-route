@@ -44,6 +44,10 @@ Preferred communication style: Simple, everyday language.
 - **Center**: Leaflet map with customer markers, isochrone polygons, route corridors
 - **Right Panel** (360px): Customer list with search and filtering
 
+### Corridor Analysis Modes
+- **Distance Mode**: Creates buffer corridor around route by specified kilometers
+- **Time Mode**: Generates isochrones at sample points along the route, creates unified corridor by travel time
+
 ### Key Design Patterns
 - **Shared Types**: Schema definitions in `shared/` are used by both client and server
 - **API Rate Limiting**: Built-in rate limiter for external API calls (1 request/second)

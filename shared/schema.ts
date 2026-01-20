@@ -3,11 +3,10 @@ import { pgTable, text, varchar, real, timestamp, jsonb } from "drizzle-orm/pg-c
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Customers table
+// Customers table - simplified to name and city only
 export const customers = pgTable("customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  address: text("address").notNull(),
   city: text("city").notNull(),
   lat: real("lat"),
   lon: real("lon"),
@@ -76,10 +75,9 @@ export const directionsRequestSchema = z.object({
 
 export type DirectionsRequest = z.infer<typeof directionsRequestSchema>;
 
-// CSV import types
+// CSV import types - simplified to name and city only
 export const csvRowSchema = z.object({
   name: z.string(),
-  address: z.string(),
   city: z.string(),
   lat: z.number().optional(),
   lon: z.number().optional(),
@@ -87,10 +85,9 @@ export const csvRowSchema = z.object({
 
 export type CsvRow = z.infer<typeof csvRowSchema>;
 
-// Column mapping type
+// Column mapping type - simplified to name and city only
 export interface ColumnMapping {
   name: string;
-  address: string;
   city: string;
   lat?: string;
   lon?: string;

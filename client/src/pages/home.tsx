@@ -19,13 +19,17 @@ export interface IsochroneState {
   isComputing: boolean;
 }
 
+export type CorridorMode = "distance" | "time";
+
 export interface CorridorState {
   origin: { lat: number; lon: number } | null;
   originAddress: string;
   destination: { lat: number; lon: number } | null;
   destinationAddress: string;
   waypoints: Array<{ lat: number; lon: number; address: string }>;
+  mode: CorridorMode;
   widthKm: number;
+  timeMinutes: number;
   route: GeoJSON.Feature<GeoJSON.LineString> | null;
   corridor: GeoJSON.Feature<GeoJSON.Polygon> | null;
   isComputing: boolean;
@@ -66,7 +70,9 @@ export default function Home() {
     destination: null,
     destinationAddress: "",
     waypoints: [],
+    mode: "distance",
     widthKm: 10,
+    timeMinutes: 15,
     route: null,
     corridor: null,
     isComputing: false,
@@ -114,7 +120,7 @@ export default function Home() {
       for (let i = 0; i < customersToGeocode.length; i++) {
         const customer = customersToGeocode[i];
         try {
-          const fullAddress = `${customer.address}, ${customer.city}`;
+          const fullAddress = customer.city;
           const response = await apiRequest("POST", "/api/ors/geocode", { address: fullAddress });
           const data = await response.json();
           
@@ -235,9 +241,96 @@ export default function Home() {
       if (data.features && data.features.length > 0) {
         const route = data.features[0] as GeoJSON.Feature<GeoJSON.LineString>;
         
-        // Create corridor buffer
-        const buffered = turf.buffer(route, corridorState.widthKm, { units: "kilometers" });
-        const corridor = buffered as GeoJSON.Feature<GeoJSON.Polygon>;
+        let corridor: GeoJSON.Feature<GeoJSON.Polygon>;
+        let corridorDescription: string;
+
+        if (corridorState.mode === "distance") {
+          // Create corridor buffer by distance
+          const buffered = turf.buffer(route, corridorState.widthKm, { units: "kilometers" });
+          corridor = buffered as GeoJSON.Feature<GeoJSON.Polygon>;
+          corridorDescription = `corredor de ${corridorState.widthKm}km`;
+        } else {
+          // Create corridor by time - generate isochrones along the route
+          // Sample points along the route and create isochrones for each
+          const routeLength = turf.length(route, { units: "kilometers" });
+          const numSamples = Math.max(2, Math.min(5, Math.ceil(routeLength / 50))); // Sample every ~50km
+          const sampleDistance = routeLength / (numSamples - 1);
+          
+          const isochrones: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
+          
+          for (let i = 0; i < numSamples; i++) {
+            const distance = i * sampleDistance;
+            const point = turf.along(route, distance, { units: "kilometers" });
+            const [lon, lat] = point.geometry.coordinates;
+            
+            try {
+              const isoResponse = await apiRequest("POST", "/api/ors/isochrones", {
+                lat,
+                lon,
+                minutes: corridorState.timeMinutes,
+              });
+              const isoData = await isoResponse.json();
+              
+              if (isoData.features && isoData.features.length > 0) {
+                isochrones.push(isoData.features[0] as GeoJSON.Feature<GeoJSON.Polygon>);
+              }
+            } catch {
+              console.error("Failed to get isochrone for point", i);
+            }
+            
+            // Add delay between requests to respect rate limiting (1 req/second)
+            if (i < numSamples - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1100));
+            }
+          }
+          
+          // Union all isochrones to create the corridor
+          if (isochrones.length > 0) {
+            // Start with first isochrone
+            let corridorPolygons: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> = isochrones[0];
+            
+            for (let i = 1; i < isochrones.length; i++) {
+              try {
+                const union = turf.union(
+                  turf.featureCollection([corridorPolygons as GeoJSON.Feature<GeoJSON.Polygon>, isochrones[i]])
+                );
+                if (union) {
+                  corridorPolygons = union as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
+                }
+              } catch {
+                console.error("Failed to union isochrones");
+              }
+            }
+            
+            // Convert to single Polygon for corridor (merge all polygons in MultiPolygon via convex hull as fallback)
+            if (corridorPolygons.geometry.type === "MultiPolygon") {
+              // Create a convex hull around all polygons to get a single polygon corridor
+              const allCoords: number[][] = [];
+              for (const polyCoords of corridorPolygons.geometry.coordinates) {
+                for (const ring of polyCoords) {
+                  allCoords.push(...ring);
+                }
+              }
+              const points = turf.multiPoint(allCoords as [number, number][]);
+              const hull = turf.convex(points);
+              if (hull) {
+                corridor = hull as GeoJSON.Feature<GeoJSON.Polygon>;
+              } else {
+                // Fallback: use buffer around route
+                const buffered = turf.buffer(route, corridorState.widthKm, { units: "kilometers" });
+                corridor = buffered as GeoJSON.Feature<GeoJSON.Polygon>;
+              }
+            } else {
+              corridor = corridorPolygons as GeoJSON.Feature<GeoJSON.Polygon>;
+            }
+          } else {
+            // Fallback to distance-based buffer if isochrones fail
+            const buffered = turf.buffer(route, corridorState.widthKm, { units: "kilometers" });
+            corridor = buffered as GeoJSON.Feature<GeoJSON.Polygon>;
+          }
+          
+          corridorDescription = `corredor de ${corridorState.timeMinutes} minutos`;
+        }
 
         setCorridorState(prev => ({ ...prev, route, corridor, isComputing: false }));
 
@@ -255,7 +348,7 @@ export default function Home() {
 
         toast({
           title: "Corredor calculado",
-          description: `${insideIds.size} clientes encontrados no corredor de ${corridorState.widthKm}km`,
+          description: `${insideIds.size} clientes encontrados no ${corridorDescription}`,
         });
       }
     } catch (error) {
@@ -267,7 +360,7 @@ export default function Home() {
         variant: "destructive",
       });
     }
-  }, [corridorState.origin, corridorState.destination, corridorState.waypoints, corridorState.widthKm, customers, toast]);
+  }, [corridorState.origin, corridorState.destination, corridorState.waypoints, corridorState.mode, corridorState.widthKm, corridorState.timeMinutes, customers, toast]);
 
   // Handle map click for point selection
   const handleMapClick = useCallback((lat: number, lon: number) => {
@@ -320,13 +413,13 @@ export default function Home() {
       setIsochroneState(prev => ({
         ...prev,
         origin: { lat: customer.lat!, lon: customer.lon! },
-        originAddress: `${customer.address}, ${customer.city}`,
+        originAddress: `${customer.name}, ${customer.city}`,
       }));
     } else {
       setCorridorState(prev => ({
         ...prev,
         origin: { lat: customer.lat!, lon: customer.lon! },
-        originAddress: `${customer.address}, ${customer.city}`,
+        originAddress: `${customer.name}, ${customer.city}`,
       }));
     }
     toast({ title: `${customer.name} selecionado como origem` });
@@ -361,7 +454,6 @@ export default function Home() {
     const query = searchQuery.toLowerCase();
     return (
       customer.name.toLowerCase().includes(query) ||
-      customer.address.toLowerCase().includes(query) ||
       customer.city.toLowerCase().includes(query)
     );
   });
@@ -401,13 +493,13 @@ export default function Home() {
       return;
     }
 
-    const headers = ["Nome", "Endereço", "Cidade", "Latitude", "Longitude"];
+    const headers = ["Nome", "Cidade", "Latitude", "Longitude"];
     if (activeTab === "corridor" && corridorState.route) {
       headers.push("Distância até Rota (km)");
     }
 
     const rows = filtered.map(c => {
-      const row = [c.name, c.address, c.city, c.lat?.toString() || "", c.lon?.toString() || ""];
+      const row = [c.name, c.city, c.lat?.toString() || "", c.lon?.toString() || ""];
       if (activeTab === "corridor" && corridorState.route) {
         const dist = getDistanceToRoute(c);
         row.push(dist !== null ? dist.toString() : "");
@@ -487,7 +579,7 @@ export default function Home() {
         isLoading={customersLoading}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        onCustomerClick={(customer) => setSelectedCustomerId(customer.id)}
+        onCustomerClick={(customer: Customer) => setSelectedCustomerId(customer.id)}
         onExportCsv={exportToCsv}
         selectedCustomerId={selectedCustomerId}
         activeTab={activeTab}

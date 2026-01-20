@@ -59,7 +59,6 @@ export class MemStorage implements IStorage {
     const customer: Customer = {
       id,
       name: insertCustomer.name,
-      address: insertCustomer.address,
       city: insertCustomer.city,
       lat: insertCustomer.lat ?? null,
       lon: insertCustomer.lon ?? null,

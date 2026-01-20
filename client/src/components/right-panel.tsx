@@ -160,9 +160,6 @@ export function RightPanel({
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground truncate mt-0.5">
-                          {customer.address}
-                        </p>
-                        <p className="text-xs text-muted-foreground/70 truncate">
                           {customer.city}
                         </p>
                       </div>

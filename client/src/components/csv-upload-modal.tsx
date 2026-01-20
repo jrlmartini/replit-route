@@ -38,7 +38,6 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
   const [headers, setHeaders] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({
     name: "",
-    address: "",
     city: "",
   });
   const [importProgress, setImportProgress] = useState(0);
@@ -48,7 +47,7 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
     setStep("upload");
     setCsvData([]);
     setHeaders([]);
-    setColumnMapping({ name: "", address: "", city: "" });
+    setColumnMapping({ name: "", city: "" });
     setImportProgress(0);
     setError(null);
   };
@@ -89,14 +88,12 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
         setCsvData(data.slice(1).filter(row => row.some(cell => cell.trim())));
 
         // Try to auto-map common column names
-        const autoMapping: ColumnMapping = { name: "", address: "", city: "" };
+        const autoMapping: ColumnMapping = { name: "", city: "" };
         
         fileHeaders.forEach(header => {
           const h = header.toLowerCase();
           if (h.includes("nome") || h.includes("name") || h === "cliente") {
             autoMapping.name = header;
-          } else if (h.includes("endereço") || h.includes("endereco") || h.includes("address") || h === "rua") {
-            autoMapping.address = header;
           } else if (h.includes("cidade") || h.includes("city") || h === "municipio" || h.includes("município")) {
             autoMapping.city = header;
           } else if (h === "lat" || h.includes("latitude")) {
@@ -120,7 +117,6 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
       setStep("importing");
       
       const nameIdx = headers.indexOf(columnMapping.name);
-      const addressIdx = headers.indexOf(columnMapping.address);
       const cityIdx = headers.indexOf(columnMapping.city);
       const latIdx = columnMapping.lat ? headers.indexOf(columnMapping.lat) : -1;
       const lonIdx = columnMapping.lon ? headers.indexOf(columnMapping.lon) : -1;
@@ -131,12 +127,11 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
         
         return {
           name: row[nameIdx]?.trim() || "Sem nome",
-          address: row[addressIdx]?.trim() || "",
           city: row[cityIdx]?.trim() || "",
           lat: lat !== null && !isNaN(lat) ? lat : null,
           lon: lon !== null && !isNaN(lon) ? lon : null,
         };
-      }).filter(c => c.address || c.name !== "Sem nome");
+      }).filter(c => c.name !== "Sem nome" && c.city);
 
       // Import in batches
       const batchSize = 50;
@@ -165,7 +160,7 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
     },
   });
 
-  const canProceed = columnMapping.name && columnMapping.address && columnMapping.city;
+  const canProceed = columnMapping.name && columnMapping.city;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
@@ -205,7 +200,7 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
                 Arraste o arquivo CSV ou clique para selecionar
               </p>
               <p className="text-xs text-muted-foreground">
-                Colunas esperadas: nome, endereço, cidade
+                Colunas esperadas: nome, cidade
               </p>
             </label>
           </div>
@@ -229,25 +224,6 @@ export function CsvUploadModal({ open, onClose }: CsvUploadModalProps) {
                   onValueChange={(v) => setColumnMapping(prev => ({ ...prev, name: v }))}
                 >
                   <SelectTrigger data-testid="select-column-name">
-                    <SelectValue placeholder="Selecione a coluna" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {headers.map(h => (
-                      <SelectItem key={h} value={h}>{h}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  Coluna Endereço <span className="text-destructive">*</span>
-                </Label>
-                <Select
-                  value={columnMapping.address}
-                  onValueChange={(v) => setColumnMapping(prev => ({ ...prev, address: v }))}
-                >
-                  <SelectTrigger data-testid="select-column-address">
                     <SelectValue placeholder="Selecione a coluna" />
                   </SelectTrigger>
                   <SelectContent>

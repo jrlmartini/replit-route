@@ -1,4 +1,4 @@
-import { Clock, Route, MapPin, Upload, Layers, Search, X, ChevronDown } from "lucide-react";
+import { Clock, Route, MapPin, Upload, Layers, Search, X, ChevronDown, Ruler, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import type { ActiveTab, IsochroneState, CorridorState, LayerVisibility } from "@/pages/home";
+import type { ActiveTab, IsochroneState, CorridorState, LayerVisibility, CorridorMode } from "@/pages/home";
 import { useState } from "react";
 
 interface LeftSidebarProps {
@@ -307,24 +307,79 @@ export function LeftSidebar({
               </Button>
             )}
 
+            {/* Mode selector */}
             <div className="space-y-2">
-              <Label className="text-sm font-medium">
-                Largura do corredor: {corridorState.widthKm} km
-              </Label>
-              <Slider
-                value={[corridorState.widthKm]}
-                onValueChange={([value]) => setCorridorState(prev => ({ ...prev, widthKm: value }))}
-                min={2}
-                max={30}
-                step={1}
-                className="py-2"
-                data-testid="slider-corridor-width"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>2 km</span>
-                <span>30 km</span>
+              <Label className="text-sm font-medium">Tipo de corredor</Label>
+              <div className="flex gap-2">
+                <Button
+                  variant={corridorState.mode === "distance" ? "default" : "outline"}
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => setCorridorState(prev => ({ ...prev, mode: "distance" as CorridorMode }))}
+                  data-testid="button-mode-distance"
+                >
+                  <Ruler className="w-4 h-4 mr-1" />
+                  Distância
+                </Button>
+                <Button
+                  variant={corridorState.mode === "time" ? "default" : "outline"}
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => setCorridorState(prev => ({ ...prev, mode: "time" as CorridorMode }))}
+                  data-testid="button-mode-time"
+                >
+                  <Timer className="w-4 h-4 mr-1" />
+                  Tempo
+                </Button>
               </div>
             </div>
+
+            {/* Distance slider (visible when mode is distance) */}
+            {corridorState.mode === "distance" && (
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  Largura do corredor: {corridorState.widthKm} km
+                </Label>
+                <Slider
+                  value={[corridorState.widthKm]}
+                  onValueChange={([value]) => setCorridorState(prev => ({ ...prev, widthKm: value }))}
+                  min={2}
+                  max={30}
+                  step={1}
+                  className="py-2"
+                  data-testid="slider-corridor-width"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>2 km</span>
+                  <span>30 km</span>
+                </div>
+              </div>
+            )}
+
+            {/* Time slider (visible when mode is time) */}
+            {corridorState.mode === "time" && (
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  Tempo de acesso: {corridorState.timeMinutes} minutos
+                </Label>
+                <Slider
+                  value={[corridorState.timeMinutes]}
+                  onValueChange={([value]) => setCorridorState(prev => ({ ...prev, timeMinutes: value }))}
+                  min={5}
+                  max={60}
+                  step={5}
+                  className="py-2"
+                  data-testid="slider-corridor-time"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>5 min</span>
+                  <span>60 min</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Calcula isócronas ao longo da rota
+                </p>
+              </div>
+            )}
 
             <div className="flex gap-2">
               <Button
