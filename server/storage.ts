@@ -2,13 +2,14 @@ import {
   type Customer, type InsertCustomer,
   type GeocodeCache, type InsertGeocodeCache,
   type QueryCache, type InsertQueryCache,
-  type User, type InsertUser 
+  type User, type InsertUser,
+  customers, geocodeCache, queryCache, users
 } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 import crypto from "crypto";
 
 export interface IStorage {
-  // Customers
   getCustomers(): Promise<Customer[]>;
   getCustomer(id: string): Promise<Customer | undefined>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
@@ -17,154 +18,123 @@ export interface IStorage {
   deleteCustomer(id: string): Promise<boolean>;
   deleteAllCustomers(): Promise<void>;
   
-  // Geocode cache
   getGeocodeCache(addressHash: string): Promise<GeocodeCache | undefined>;
   setGeocodeCache(cache: InsertGeocodeCache): Promise<GeocodeCache>;
   
-  // Query cache
   getQueryCache(key: string): Promise<QueryCache | undefined>;
   setQueryCache(cache: InsertQueryCache): Promise<QueryCache>;
   clearQueryCache(): Promise<void>;
   
-  // Users (keeping for compatibility)
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
 }
 
-export class MemStorage implements IStorage {
-  private customers: Map<string, Customer>;
-  private geocodeCache: Map<string, GeocodeCache>;
-  private queryCache: Map<string, QueryCache>;
-  private users: Map<string, User>;
-
-  constructor() {
-    this.customers = new Map();
-    this.geocodeCache = new Map();
-    this.queryCache = new Map();
-    this.users = new Map();
-  }
-
-  // Customer methods
+export class DatabaseStorage implements IStorage {
   async getCustomers(): Promise<Customer[]> {
-    return Array.from(this.customers.values());
+    return db.select().from(customers);
   }
 
   async getCustomer(id: string): Promise<Customer | undefined> {
-    return this.customers.get(id);
+    const [customer] = await db.select().from(customers).where(eq(customers.id, id));
+    return customer;
   }
 
   async createCustomer(insertCustomer: InsertCustomer): Promise<Customer> {
-    const id = randomUUID();
-    const customer: Customer = {
-      id,
-      name: insertCustomer.name,
-      city: insertCustomer.city,
-      lat: insertCustomer.lat ?? null,
-      lon: insertCustomer.lon ?? null,
-      createdAt: new Date(),
-    };
-    this.customers.set(id, customer);
+    const [customer] = await db.insert(customers).values(insertCustomer).returning();
     return customer;
   }
 
   async createCustomers(insertCustomers: InsertCustomer[]): Promise<Customer[]> {
-    const created: Customer[] = [];
-    for (const insertCustomer of insertCustomers) {
-      const customer = await this.createCustomer(insertCustomer);
-      created.push(customer);
-    }
-    return created;
+    if (insertCustomers.length === 0) return [];
+    return db.insert(customers).values(insertCustomers).returning();
   }
 
   async updateCustomer(id: string, updates: Partial<InsertCustomer>): Promise<Customer | undefined> {
-    const existing = this.customers.get(id);
-    if (!existing) return undefined;
-    
-    const updated: Customer = { ...existing, ...updates };
-    this.customers.set(id, updated);
-    return updated;
+    const [customer] = await db
+      .update(customers)
+      .set(updates)
+      .where(eq(customers.id, id))
+      .returning();
+    return customer;
   }
 
   async deleteCustomer(id: string): Promise<boolean> {
-    return this.customers.delete(id);
+    const result = await db.delete(customers).where(eq(customers.id, id)).returning();
+    return result.length > 0;
   }
 
   async deleteAllCustomers(): Promise<void> {
-    this.customers.clear();
+    await db.delete(customers);
   }
 
-  // Geocode cache methods
   async getGeocodeCache(addressHash: string): Promise<GeocodeCache | undefined> {
-    return this.geocodeCache.get(addressHash);
+    const [cached] = await db.select().from(geocodeCache).where(eq(geocodeCache.addressHash, addressHash));
+    return cached;
   }
 
   async setGeocodeCache(cache: InsertGeocodeCache): Promise<GeocodeCache> {
-    const entry: GeocodeCache = {
-      addressHash: cache.addressHash,
-      addressText: cache.addressText,
-      lat: cache.lat,
-      lon: cache.lon,
-      rawJson: cache.rawJson ?? null,
-      updatedAt: new Date(),
-    };
-    this.geocodeCache.set(cache.addressHash, entry);
+    const [entry] = await db
+      .insert(geocodeCache)
+      .values(cache)
+      .onConflictDoUpdate({
+        target: geocodeCache.addressHash,
+        set: { lat: cache.lat, lon: cache.lon, rawJson: cache.rawJson ?? null, updatedAt: new Date() },
+      })
+      .returning();
     return entry;
   }
 
-  // Query cache methods
   async getQueryCache(key: string): Promise<QueryCache | undefined> {
-    return this.queryCache.get(key);
+    const [cached] = await db.select().from(queryCache).where(eq(queryCache.key, key));
+    return cached;
   }
 
   async setQueryCache(cache: InsertQueryCache): Promise<QueryCache> {
-    const entry: QueryCache = {
-      ...cache,
-      updatedAt: new Date(),
-    };
-    this.queryCache.set(cache.key, entry);
+    const [entry] = await db
+      .insert(queryCache)
+      .values(cache)
+      .onConflictDoUpdate({
+        target: queryCache.key,
+        set: { responseJson: cache.responseJson, updatedAt: new Date() },
+      })
+      .returning();
     return entry;
   }
 
   async clearQueryCache(): Promise<void> {
-    this.queryCache.clear();
+    await db.delete(queryCache);
   }
 
-  // User methods (keeping for compatibility)
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
+    const [user] = await db.insert(users).values(insertUser).returning();
     return user;
   }
 }
 
-// Utility to hash addresses for cache lookup
 export function hashAddress(address: string): string {
   return crypto.createHash('md5').update(address.toLowerCase().trim()).digest('hex');
 }
 
-// Utility to create isochrone cache key
 export function createIsochroneCacheKey(lat: number, lon: number, minutes: number): string {
   const roundedLat = lat.toFixed(5);
   const roundedLon = lon.toFixed(5);
   return `isochrone:${roundedLat}:${roundedLon}:${minutes}:driving-car`;
 }
 
-// Utility to create directions cache key
 export function createDirectionsCacheKey(coordinates: [number, number][]): string {
   const coordStr = coordinates.map(c => `${c[0].toFixed(5)},${c[1].toFixed(5)}`).join('|');
   return `directions:${crypto.createHash('md5').update(coordStr).digest('hex')}`;
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

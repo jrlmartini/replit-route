@@ -31,13 +31,14 @@ Preferred communication style: Simple, everyday language.
 - **API Pattern**: RESTful JSON APIs under `/api/*` prefix
 
 ### Data Storage
-- **Storage**: In-memory storage (MemStorage) for prototype/single-user use
+- **Storage**: PostgreSQL (Neon-backed via Replit) with Drizzle ORM
 - **Schema Location**: `shared/schema.ts`
+- **Database Connection**: `server/db.ts` using `pg` Pool with `DATABASE_URL`
 - **Data Models**:
-  - `customers`: Customer records with name, address, city, lat/lon coordinates
+  - `customers`: Customer records with name, city, lat/lon coordinates
   - `geocode_cache`: Cached geocoding results to avoid redundant API calls
   - `query_cache`: Cached isochrone and directions responses
-- **Note**: Data persists during server session but resets on restart. For production use, upgrade to PostgreSQL.
+- **Note**: Data is persistent across restarts and deployments.
 
 ### Three-Panel Layout
 - **Left Sidebar** (320px): Controls, feature tabs (Isochrone/Corridor), layer toggles
@@ -71,9 +72,9 @@ Preferred communication style: Simple, everyday language.
   - **Rate Limits**: Application enforces 1 second minimum between requests
 
 ### Storage
-- **In-Memory**: Current implementation uses MemStorage for single-user prototype
-  - Data persists during server session
-  - All caching happens in memory for performance
+- **PostgreSQL**: Persistent storage via Replit's built-in Neon-backed PostgreSQL
+  - Customer data, geocode cache, and query cache persist across restarts/deployments
+  - Connected via `DATABASE_URL` environment variable
 
 ### Key NPM Dependencies
 - `leaflet` + `leaflet.markercluster`: Map rendering and marker clustering
