@@ -103,10 +103,10 @@ export function LeftSidebar({
       <div className="p-4 border-b border-sidebar-border">
         <h1 className="text-lg font-semibold text-sidebar-foreground flex items-center gap-2">
           <MapPin className="w-5 h-5 text-primary" />
-          Geo-CRM Map
+          Conatus GeoCRM
         </h1>
         <p className="text-xs text-muted-foreground mt-1">
-          Análise de rotas e cobertura
+          Otimização de Rotas
         </p>
       </div>
 
