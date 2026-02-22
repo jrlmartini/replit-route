@@ -75,6 +75,15 @@ export const directionsRequestSchema = z.object({
 
 export type DirectionsRequest = z.infer<typeof directionsRequestSchema>;
 
+export const corridorAnalysisRequestSchema = z.object({
+  coordinates: z.array(z.tuple([z.number(), z.number()])).min(2),
+  mode: z.enum(["distance", "time"]),
+  widthKm: z.number().min(2).max(30),
+  timeMinutes: z.number().min(5).max(60),
+});
+
+export type CorridorAnalysisRequest = z.infer<typeof corridorAnalysisRequestSchema>;
+
 // CSV import types - simplified to name and city only
 export const csvRowSchema = z.object({
   name: z.string(),
