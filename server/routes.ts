@@ -142,9 +142,11 @@ export async function registerRoutes(
 
       await waitForRateLimit();
 
+      const normalizedText = text.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
       const params = new URLSearchParams({
         api_key: ORS_API_KEY,
-        text: text.trim(),
+        text: normalizedText,
         "boundary.country": "BR",
         size: "5",
         layers: "locality,address,venue,street,neighbourhood",
