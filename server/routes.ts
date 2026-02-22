@@ -325,7 +325,8 @@ export async function registerRoutes(
 
       await waitForRateLimit();
 
-      const response = await fetch(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
+      // Try with alternative routes first
+      let response = await fetch(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
         method: "POST",
         headers: {
           "Authorization": ORS_API_KEY,
@@ -342,13 +343,39 @@ export async function registerRoutes(
         }),
       });
 
+      // If alternative routes fail (e.g. route too long >100km), retry without alternatives
       if (!response.ok) {
-        if (response.status === 429) {
-          return res.status(429).json({ error: "Limite de requisições atingido. Tente novamente em alguns minutos." });
+        const errorText = await response.text();
+        let shouldRetry = false;
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson?.error?.code === 2004) {
+            shouldRetry = true;
+          }
+        } catch {}
+
+        if (shouldRetry) {
+          console.log("Alternative routes not available for this distance, retrying without alternatives");
+          await waitForRateLimit();
+          response = await fetch(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
+            method: "POST",
+            headers: {
+              "Authorization": ORS_API_KEY,
+              "Content-Type": "application/json",
+              "Accept": "application/json, application/geo+json",
+            },
+            body: JSON.stringify({ coordinates }),
+          });
         }
-        const text = await response.text();
-        console.error("ORS directions error:", response.status, text);
-        return res.status(response.status).json({ error: "Erro no serviço de rotas" });
+
+        if (!response.ok) {
+          if (response.status === 429) {
+            return res.status(429).json({ error: "Limite de requisições atingido. Tente novamente em alguns minutos." });
+          }
+          const retryText = shouldRetry ? await response.text() : errorText;
+          console.error("ORS directions error:", response.status, retryText);
+          return res.status(response.status).json({ error: "Erro no serviço de rotas" });
+        }
       }
 
       const data = await response.json();
