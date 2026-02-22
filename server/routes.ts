@@ -128,6 +128,56 @@ export async function registerRoutes(
     }
   });
 
+  // GET autocomplete address (ORS proxy)
+  app.get("/api/ors/autocomplete", async (req, res) => {
+    try {
+      const text = req.query.text as string;
+      if (!text || text.trim().length < 3) {
+        return res.json([]);
+      }
+
+      if (!ORS_API_KEY) {
+        return res.status(500).json({ error: "Chave ORS não configurada" });
+      }
+
+      await waitForRateLimit();
+
+      const params = new URLSearchParams({
+        api_key: ORS_API_KEY,
+        text: text.trim(),
+        "boundary.country": "BR",
+        size: "5",
+        layers: "locality,address,venue,street,neighbourhood",
+      });
+
+      const response = await fetch(
+        `${ORS_BASE_URL}/geocode/autocomplete?${params}`,
+        { headers: { "Accept": "application/json" } }
+      );
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          return res.status(429).json({ error: "Limite de requisições atingido" });
+        }
+        const errText = await response.text();
+        console.error("ORS autocomplete error:", response.status, errText);
+        return res.status(response.status).json({ error: "Erro no autocomplete" });
+      }
+
+      const data = await response.json();
+      const suggestions = (data.features || []).map((f: any) => ({
+        label: f.properties?.label || f.properties?.name || "",
+        lat: f.geometry?.coordinates?.[1],
+        lon: f.geometry?.coordinates?.[0],
+      }));
+
+      res.json(suggestions);
+    } catch (error) {
+      console.error("Autocomplete error:", error);
+      res.status(500).json({ error: "Erro no autocomplete" });
+    }
+  });
+
   // POST geocode address (ORS proxy)
   app.post("/api/ors/geocode", async (req, res) => {
     try {

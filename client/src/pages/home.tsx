@@ -586,7 +586,6 @@ export default function Home() {
         onComputeIsochrone={computeIsochrone}
         onComputeCorridor={computeCorridor}
         onClearAnalysis={clearAnalysis}
-        onGeocodeAddress={geocodeAddress}
         onOpenCsvModal={() => setShowCsvModal(true)}
         onGeocodeCustomers={() => geocodeCustomersMutation.mutate()}
         geocodingProgress={geocodingProgress}

@@ -1,6 +1,5 @@
 import { Clock, Route, MapPin, Upload, Layers, Search, X, ChevronDown, Ruler, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -10,6 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { cn } from "@/lib/utils";
 import type { ActiveTab, IsochroneState, CorridorState, LayerVisibility, CorridorMode } from "@/pages/home";
 import { useState } from "react";
+import { AddressAutocomplete } from "./address-autocomplete";
 
 interface LeftSidebarProps {
   activeTab: ActiveTab;
@@ -25,7 +25,6 @@ interface LeftSidebarProps {
   onComputeIsochrone: () => void;
   onComputeCorridor: () => void;
   onClearAnalysis: () => void;
-  onGeocodeAddress: (address: string) => Promise<{ lat: number; lon: number } | null>;
   onOpenCsvModal: () => void;
   onGeocodeCustomers: () => void;
   geocodingProgress: { current: number; total: number; isActive: boolean };
@@ -47,7 +46,6 @@ export function LeftSidebar({
   onComputeIsochrone,
   onComputeCorridor,
   onClearAnalysis,
-  onGeocodeAddress,
   onOpenCsvModal,
   onGeocodeCustomers,
   geocodingProgress,
@@ -55,43 +53,29 @@ export function LeftSidebar({
   customersNeedingGeocode,
 }: LeftSidebarProps) {
   const [layersOpen, setLayersOpen] = useState(true);
-  const [isGeocodingOrigin, setIsGeocodingOrigin] = useState(false);
-  const [isGeocodingDestination, setIsGeocodingDestination] = useState(false);
 
-  const handleOriginAddressBlur = async (address: string) => {
-    if (!address.trim()) return;
-    setIsGeocodingOrigin(true);
-    const result = await onGeocodeAddress(address);
-    setIsGeocodingOrigin(false);
-    if (result) {
-      if (activeTab === "isochrone") {
-        setIsochroneState(prev => ({
-          ...prev,
-          origin: result,
-          originAddress: address,
-        }));
-      } else {
-        setCorridorState(prev => ({
-          ...prev,
-          origin: result,
-          originAddress: address,
-        }));
-      }
+  const handleOriginSelect = (suggestion: { label: string; lat: number; lon: number }) => {
+    if (activeTab === "isochrone") {
+      setIsochroneState(prev => ({
+        ...prev,
+        origin: { lat: suggestion.lat, lon: suggestion.lon },
+        originAddress: suggestion.label,
+      }));
+    } else {
+      setCorridorState(prev => ({
+        ...prev,
+        origin: { lat: suggestion.lat, lon: suggestion.lon },
+        originAddress: suggestion.label,
+      }));
     }
   };
 
-  const handleDestinationAddressBlur = async (address: string) => {
-    if (!address.trim()) return;
-    setIsGeocodingDestination(true);
-    const result = await onGeocodeAddress(address);
-    setIsGeocodingDestination(false);
-    if (result) {
-      setCorridorState(prev => ({
-        ...prev,
-        destination: result,
-        destinationAddress: address,
-      }));
-    }
+  const handleDestinationSelect = (suggestion: { label: string; lat: number; lon: number }) => {
+    setCorridorState(prev => ({
+      ...prev,
+      destination: { lat: suggestion.lat, lon: suggestion.lon },
+      destinationAddress: suggestion.label,
+    }));
   };
 
   return (
@@ -148,18 +132,13 @@ export function LeftSidebar({
             <div className="space-y-2">
               <Label className="text-sm font-medium">Ponto de origem</Label>
               <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Digite o endereço..."
-                    value={isochroneState.originAddress}
-                    onChange={(e) => setIsochroneState(prev => ({ ...prev, originAddress: e.target.value }))}
-                    onBlur={(e) => handleOriginAddressBlur(e.target.value)}
-                    className="pl-9"
-                    disabled={isGeocodingOrigin}
-                    data-testid="input-isochrone-origin"
-                  />
-                </div>
+                <AddressAutocomplete
+                  value={isochroneState.originAddress}
+                  onChange={(val) => setIsochroneState(prev => ({ ...prev, originAddress: val }))}
+                  onSelect={handleOriginSelect}
+                  placeholder="Digite o endereço..."
+                  data-testid="input-isochrone-origin"
+                />
                 <Button
                   size="icon"
                   variant={mapSelectionMode === "origin" && activeTab === "isochrone" ? "default" : "outline"}
@@ -220,18 +199,13 @@ export function LeftSidebar({
             <div className="space-y-2">
               <Label className="text-sm font-medium">Origem</Label>
               <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Endereço de origem..."
-                    value={corridorState.originAddress}
-                    onChange={(e) => setCorridorState(prev => ({ ...prev, originAddress: e.target.value }))}
-                    onBlur={(e) => handleOriginAddressBlur(e.target.value)}
-                    className="pl-9"
-                    disabled={isGeocodingOrigin}
-                    data-testid="input-corridor-origin"
-                  />
-                </div>
+                <AddressAutocomplete
+                  value={corridorState.originAddress}
+                  onChange={(val) => setCorridorState(prev => ({ ...prev, originAddress: val }))}
+                  onSelect={handleOriginSelect}
+                  placeholder="Endereço de origem..."
+                  data-testid="input-corridor-origin"
+                />
                 <Button
                   size="icon"
                   variant={mapSelectionMode === "origin" && activeTab === "corridor" ? "default" : "outline"}
@@ -247,18 +221,13 @@ export function LeftSidebar({
             <div className="space-y-2">
               <Label className="text-sm font-medium">Destino</Label>
               <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Endereço de destino..."
-                    value={corridorState.destinationAddress}
-                    onChange={(e) => setCorridorState(prev => ({ ...prev, destinationAddress: e.target.value }))}
-                    onBlur={(e) => handleDestinationAddressBlur(e.target.value)}
-                    className="pl-9"
-                    disabled={isGeocodingDestination}
-                    data-testid="input-corridor-destination"
-                  />
-                </div>
+                <AddressAutocomplete
+                  value={corridorState.destinationAddress}
+                  onChange={(val) => setCorridorState(prev => ({ ...prev, destinationAddress: val }))}
+                  onSelect={handleDestinationSelect}
+                  placeholder="Endereço de destino..."
+                  data-testid="input-corridor-destination"
+                />
                 <Button
                   size="icon"
                   variant={mapSelectionMode === "destination" ? "default" : "outline"}
