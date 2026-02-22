@@ -116,6 +116,9 @@ export function MapView({
       maxClusterRadius: 50,
       spiderfyOnMaxZoom: true,
       disableClusteringAtZoom: 16,
+      chunkedLoading: true,
+      chunkDelay: 40,
+      chunkInterval: 120,
     });
     map.addLayer(clusterGroup);
     clusterGroupRef.current = clusterGroup;

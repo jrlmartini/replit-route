@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Search, Download, MapPin, Users, Clock, Route } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -35,17 +36,29 @@ export function RightPanel({
   hasActiveAnalysis,
   getDistanceToRoute,
 }: RightPanelProps) {
+  const distanceByCustomerId = useMemo(() => {
+    if (activeTab !== "corridor" || !hasActiveAnalysis) return new Map<string, number | null>();
+
+    const result = new Map<string, number | null>();
+    for (const customer of customers) {
+      result.set(customer.id, getDistanceToRoute(customer));
+    }
+    return result;
+  }, [activeTab, hasActiveAnalysis, customers, getDistanceToRoute]);
+
   // Sort customers by distance to route if in corridor mode
-  const sortedCustomers = activeTab === "corridor" && hasActiveAnalysis
-    ? [...customers].sort((a, b) => {
-        const distA = getDistanceToRoute(a);
-        const distB = getDistanceToRoute(b);
-        if (distA === null && distB === null) return 0;
-        if (distA === null) return 1;
-        if (distB === null) return -1;
-        return distA - distB;
-      })
-    : customers;
+  const sortedCustomers = useMemo(() => {
+    if (activeTab !== "corridor" || !hasActiveAnalysis) return customers;
+
+    return [...customers].sort((a, b) => {
+      const distA = distanceByCustomerId.get(a.id) ?? null;
+      const distB = distanceByCustomerId.get(b.id) ?? null;
+      if (distA === null && distB === null) return 0;
+      if (distA === null) return 1;
+      if (distB === null) return -1;
+      return distA - distB;
+    });
+  }, [activeTab, hasActiveAnalysis, customers, distanceByCustomerId]);
 
   return (
     <aside 
@@ -132,8 +145,8 @@ export function RightPanel({
           ) : (
             <div className="space-y-1">
               {sortedCustomers.map(customer => {
-                const distance = activeTab === "corridor" && hasActiveAnalysis 
-                  ? getDistanceToRoute(customer) 
+                const distance = activeTab === "corridor" && hasActiveAnalysis
+                  ? distanceByCustomerId.get(customer.id) ?? null
                   : null;
                 const hasCoords = customer.lat !== null && customer.lon !== null;
 

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { MapView } from "@/components/map-view";
 import { RightPanel } from "@/components/right-panel";
@@ -7,7 +7,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Customer } from "@shared/schema";
-import { booleanPointInPolygon, point, pointToLineDistance } from "@turf/turf";
+import { point, pointToLineDistance } from "@turf/turf";
 
 export type ActiveTab = "isochrone" | "corridor";
 
@@ -174,27 +174,18 @@ export default function Home() {
     setIsochroneState(prev => ({ ...prev, isComputing: true }));
 
     try {
-      const response = await apiRequest("POST", "/api/ors/isochrones", {
+      const response = await apiRequest("POST", "/api/analysis/isochrone", {
         lat: isochroneState.origin.lat,
         lon: isochroneState.origin.lon,
         minutes: isochroneState.minutes,
       });
       const data = await response.json();
 
-      if (data.features && data.features.length > 0) {
-        const polygon = data.features[0] as GeoJSON.Feature<GeoJSON.Polygon>;
+      if (data.polygon) {
+        const polygon = data.polygon as GeoJSON.Feature<GeoJSON.Polygon>;
         setIsochroneState(prev => ({ ...prev, polygon, isComputing: false }));
 
-        // Filter customers inside polygon
-        const insideIds = new Set<string>();
-        customers.forEach(customer => {
-          if (customer.lat && customer.lon) {
-            const customerPoint = point([customer.lon, customer.lat]);
-            if (booleanPointInPolygon(customerPoint, polygon)) {
-              insideIds.add(customer.id);
-            }
-          }
-        });
+        const insideIds = new Set<string>(Array.isArray(data.insideCustomerIds) ? data.insideCustomerIds : []);
         setFilteredCustomerIds(insideIds);
 
         toast({
@@ -211,7 +202,7 @@ export default function Home() {
         variant: "destructive",
       });
     }
-  }, [isochroneState.origin, isochroneState.minutes, customers, toast]);
+  }, [isochroneState.origin, isochroneState.minutes, toast]);
 
   // Compute corridor
   const computeCorridor = useCallback(async () => {
@@ -348,27 +339,36 @@ export default function Home() {
     }
   }, []);
 
+  const routeDistances = useMemo(() => {
+    if (!corridorState.route) return new Map<string, number>();
+
+    const distances = new Map<string, number>();
+    for (const customer of customers) {
+      if (customer.lat === null || customer.lon === null) continue;
+      const customerPoint = point([customer.lon, customer.lat]);
+      const distance = pointToLineDistance(customerPoint, corridorState.route, { units: "kilometers" });
+      distances.set(customer.id, Math.round(distance * 10) / 10);
+    }
+    return distances;
+  }, [corridorState.route, customers]);
+
   // Calculate distance to route for a customer
   const getDistanceToRoute = useCallback((customer: Customer): number | null => {
-    if (!customer.lat || !customer.lon || !corridorState.route) return null;
-    
-    const customerPoint = point([customer.lon, customer.lat]);
-    const distance = pointToLineDistance(customerPoint, corridorState.route, { units: "kilometers" });
-    return Math.round(distance * 10) / 10;
-  }, [corridorState.route]);
+    if (!corridorState.route) return null;
+    return routeDistances.get(customer.id) ?? null;
+  }, [corridorState.route, routeDistances]);
 
   // Filter customers by search query
-  const displayedCustomers = customers.filter(customer => {
-    if (!searchQuery) return true;
+  const displayedCustomers = useMemo(() => {
+    if (!searchQuery) return customers;
     const query = searchQuery.toLowerCase();
-    return (
+    return customers.filter(customer => (
       customer.name.toLowerCase().includes(query) ||
       customer.city.toLowerCase().includes(query)
-    );
-  });
+    ));
+  }, [customers, searchQuery]);
 
-  // Get filtered customers for list panel
-  const getFilteredCustomers = useCallback(() => {
+  const filteredCustomers = useMemo(() => {
     if (filteredCustomerIds.size === 0) return displayedCustomers;
     return displayedCustomers.filter(c => filteredCustomerIds.has(c.id));
   }, [displayedCustomers, filteredCustomerIds]);
@@ -392,7 +392,7 @@ export default function Home() {
 
   // Export filtered customers to CSV
   const exportToCsv = useCallback(() => {
-    const filtered = getFilteredCustomers();
+    const filtered = filteredCustomers;
     if (filtered.length === 0) {
       toast({
         title: "Nenhum cliente para exportar",
@@ -429,7 +429,7 @@ export default function Home() {
       title: "CSV exportado",
       description: `${filtered.length} clientes exportados`,
     });
-  }, [getFilteredCustomers, activeTab, corridorState.route, getDistanceToRoute, toast]);
+  }, [filteredCustomers, activeTab, corridorState.route, getDistanceToRoute, toast]);
 
   // Count customers needing geocoding
   const customersNeedingGeocode = customers.filter(c => c.lat === null || c.lon === null).length;
@@ -483,7 +483,7 @@ export default function Home() {
 
       {/* Right Panel */}
       <RightPanel
-        customers={getFilteredCustomers()}
+        customers={filteredCustomers}
         allCustomersCount={customers.length}
         isLoading={customersLoading}
         searchQuery={searchQuery}

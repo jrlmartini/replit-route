@@ -335,6 +335,80 @@ export async function registerRoutes(
     }
   });
 
+  // POST isochrone analysis (server-side customer filtering)
+  app.post("/api/analysis/isochrone", async (req, res) => {
+    try {
+      const parsed = isochroneRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Parâmetros inválidos" });
+      }
+
+      const { lat, lon, minutes } = parsed.data;
+      const cacheKey = createIsochroneCacheKey(lat, lon, minutes);
+
+      let isochroneData: any;
+      const cached = await storage.getQueryCache(cacheKey);
+      if (cached) {
+        isochroneData = cached.responseJson;
+      } else {
+        if (!ORS_API_KEY) {
+          return res.status(500).json({ error: "Chave ORS não configurada" });
+        }
+
+        await waitForRateLimit();
+        const response = await fetchWithTimeout(`${ORS_BASE_URL}/v2/isochrones/driving-car`, {
+          method: "POST",
+          headers: {
+            "Authorization": ORS_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json, application/geo+json",
+          },
+          body: JSON.stringify({
+            locations: [[lon, lat]],
+            range: [minutes * 60],
+            range_type: "time",
+          }),
+        });
+
+        if (!response.ok) {
+          if (response.status === 429) {
+            return res.status(429).json({ error: "Limite de requisições atingido. Tente novamente em alguns minutos." });
+          }
+          const text = await response.text();
+          console.error("ORS isochrones analysis error:", response.status, text);
+          return res.status(response.status).json({ error: "Erro no serviço de isócronas" });
+        }
+
+        isochroneData = await response.json();
+        await storage.setQueryCache({
+          key: cacheKey,
+          type: "isochrone",
+          requestJson: { lat, lon, minutes },
+          responseJson: isochroneData,
+        });
+      }
+
+      const polygon = isochroneData?.features?.[0] as GeoJSON.Feature<GeoJSON.Polygon> | undefined;
+      if (!polygon) {
+        return res.status(422).json({ error: "Não foi possível gerar isócrona" });
+      }
+
+      const customers = await storage.getCustomers();
+      const insideCustomerIds = customers
+        .filter((customer) => customer.lat !== null && customer.lon !== null)
+        .filter((customer) => booleanPointInPolygon(point([customer.lon!, customer.lat!]), polygon))
+        .map((customer) => customer.id);
+
+      return res.json({ polygon, insideCustomerIds });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return res.status(504).json({ error: "Timeout ao calcular isócrona" });
+      }
+      console.error("Isochrone analysis error:", error);
+      return res.status(500).json({ error: "Erro ao calcular isócrona" });
+    }
+  });
+
   // POST directions (ORS proxy)
   app.post("/api/ors/directions", async (req, res) => {
     try {
