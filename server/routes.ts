@@ -1,11 +1,13 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage, hashAddress, createIsochroneCacheKey, createDirectionsCacheKey } from "./storage";
-import { insertCustomerSchema, geocodeRequestSchema, isochroneRequestSchema, directionsRequestSchema } from "@shared/schema";
+import { insertCustomerSchema, geocodeRequestSchema, isochroneRequestSchema, directionsRequestSchema, corridorAnalysisRequestSchema } from "@shared/schema";
 import { z } from "zod";
+import { along, booleanPointInPolygon, buffer, convex, featureCollection, length, multiPoint, point, union } from "@turf/turf";
 
 const ORS_API_KEY = process.env.ORS_API_KEY;
 const ORS_BASE_URL = "https://api.openrouteservice.org";
+const ORS_TIMEOUT_MS = 12000;
 
 // Rate limiter state
 const rateLimiter = {
@@ -20,6 +22,26 @@ async function waitForRateLimit() {
     await new Promise(resolve => setTimeout(resolve, rateLimiter.minInterval - elapsed));
   }
   rateLimiter.lastRequest = Date.now();
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ORS_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function isRouteTooLongError(errorText: string): boolean {
+  try {
+    const errorJson = JSON.parse(errorText);
+    return errorJson?.error?.code === 2004;
+  } catch {
+    return false;
+  }
 }
 
 export async function registerRoutes(
@@ -152,7 +174,7 @@ export async function registerRoutes(
         layers: "locality,address,venue,street,neighbourhood",
       });
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${ORS_BASE_URL}/geocode/autocomplete?${params}`,
         { headers: { "Accept": "application/json" } }
       );
@@ -175,6 +197,9 @@ export async function registerRoutes(
 
       res.json(suggestions);
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return res.status(504).json({ error: "Timeout no serviço de autocomplete" });
+      }
       console.error("Autocomplete error:", error);
       res.status(500).json({ error: "Erro no autocomplete" });
     }
@@ -203,7 +228,7 @@ export async function registerRoutes(
 
       await waitForRateLimit();
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${ORS_BASE_URL}/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(address)}&boundary.country=BR&size=1`,
         { headers: { "Accept": "application/json" } }
       );
@@ -236,6 +261,9 @@ export async function registerRoutes(
 
       res.json({ lat, lon, cached: false });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return res.status(504).json({ error: "Timeout no serviço de geocodificação" });
+      }
       console.error("Geocode error:", error);
       res.status(500).json({ error: "Erro na geocodificação" });
     }
@@ -264,7 +292,7 @@ export async function registerRoutes(
 
       await waitForRateLimit();
 
-      const response = await fetch(`${ORS_BASE_URL}/v2/isochrones/driving-car`, {
+      const response = await fetchWithTimeout(`${ORS_BASE_URL}/v2/isochrones/driving-car`, {
         method: "POST",
         headers: {
           "Authorization": ORS_API_KEY,
@@ -299,8 +327,85 @@ export async function registerRoutes(
 
       res.json(data);
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return res.status(504).json({ error: "Timeout no serviço de isócronas" });
+      }
       console.error("Isochrones error:", error);
       res.status(500).json({ error: "Erro ao calcular isócronas" });
+    }
+  });
+
+  // POST isochrone analysis (server-side customer filtering)
+  app.post("/api/analysis/isochrone", async (req, res) => {
+    try {
+      const parsed = isochroneRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Parâmetros inválidos" });
+      }
+
+      const { lat, lon, minutes } = parsed.data;
+      const cacheKey = createIsochroneCacheKey(lat, lon, minutes);
+
+      let isochroneData: any;
+      const cached = await storage.getQueryCache(cacheKey);
+      if (cached) {
+        isochroneData = cached.responseJson;
+      } else {
+        if (!ORS_API_KEY) {
+          return res.status(500).json({ error: "Chave ORS não configurada" });
+        }
+
+        await waitForRateLimit();
+        const response = await fetchWithTimeout(`${ORS_BASE_URL}/v2/isochrones/driving-car`, {
+          method: "POST",
+          headers: {
+            "Authorization": ORS_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json, application/geo+json",
+          },
+          body: JSON.stringify({
+            locations: [[lon, lat]],
+            range: [minutes * 60],
+            range_type: "time",
+          }),
+        });
+
+        if (!response.ok) {
+          if (response.status === 429) {
+            return res.status(429).json({ error: "Limite de requisições atingido. Tente novamente em alguns minutos." });
+          }
+          const text = await response.text();
+          console.error("ORS isochrones analysis error:", response.status, text);
+          return res.status(response.status).json({ error: "Erro no serviço de isócronas" });
+        }
+
+        isochroneData = await response.json();
+        await storage.setQueryCache({
+          key: cacheKey,
+          type: "isochrone",
+          requestJson: { lat, lon, minutes },
+          responseJson: isochroneData,
+        });
+      }
+
+      const polygon = isochroneData?.features?.[0] as GeoJSON.Feature<GeoJSON.Polygon> | undefined;
+      if (!polygon) {
+        return res.status(422).json({ error: "Não foi possível gerar isócrona" });
+      }
+
+      const customers = await storage.getCustomers();
+      const insideCustomerIds = customers
+        .filter((customer) => customer.lat !== null && customer.lon !== null)
+        .filter((customer) => booleanPointInPolygon(point([customer.lon!, customer.lat!]), polygon))
+        .map((customer) => customer.id);
+
+      return res.json({ polygon, insideCustomerIds });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return res.status(504).json({ error: "Timeout ao calcular isócrona" });
+      }
+      console.error("Isochrone analysis error:", error);
+      return res.status(500).json({ error: "Erro ao calcular isócrona" });
     }
   });
 
@@ -328,7 +433,7 @@ export async function registerRoutes(
       await waitForRateLimit();
 
       // Try with alternative routes first
-      let response = await fetch(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
+      let response = await fetchWithTimeout(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
         method: "POST",
         headers: {
           "Authorization": ORS_API_KEY,
@@ -348,18 +453,12 @@ export async function registerRoutes(
       // If alternative routes fail (e.g. route too long >100km), retry without alternatives
       if (!response.ok) {
         const errorText = await response.text();
-        let shouldRetry = false;
-        try {
-          const errorJson = JSON.parse(errorText);
-          if (errorJson?.error?.code === 2004) {
-            shouldRetry = true;
-          }
-        } catch {}
+        const shouldRetry = isRouteTooLongError(errorText);
 
         if (shouldRetry) {
           console.log("Alternative routes not available for this distance, retrying without alternatives");
           await waitForRateLimit();
-          response = await fetch(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
+          response = await fetchWithTimeout(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
             method: "POST",
             headers: {
               "Authorization": ORS_API_KEY,
@@ -392,8 +491,205 @@ export async function registerRoutes(
 
       res.json(data);
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return res.status(504).json({ error: "Timeout no serviço de rotas" });
+      }
       console.error("Directions error:", error);
       res.status(500).json({ error: "Erro ao calcular rota" });
+    }
+  });
+
+  // POST corridor analysis (server-side geometry processing)
+  app.post("/api/analysis/corridor", async (req, res) => {
+    try {
+      const parsed = corridorAnalysisRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Parâmetros inválidos" });
+      }
+
+      const { coordinates, mode, widthKm, timeMinutes } = parsed.data;
+      const directionsCacheKey = createDirectionsCacheKey(coordinates);
+
+      let directionsData: any;
+      const cachedDirections = await storage.getQueryCache(directionsCacheKey);
+
+      if (cachedDirections) {
+        directionsData = cachedDirections.responseJson;
+      } else {
+        if (!ORS_API_KEY) {
+          return res.status(500).json({ error: "Chave ORS não configurada" });
+        }
+
+        await waitForRateLimit();
+
+        let response = await fetchWithTimeout(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
+          method: "POST",
+          headers: {
+            "Authorization": ORS_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json, application/geo+json",
+          },
+          body: JSON.stringify({
+            coordinates,
+            alternative_routes: { target_count: 3, weight_factor: 1.6, share_factor: 0.6 },
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          const shouldRetry = isRouteTooLongError(errorText);
+
+          if (shouldRetry) {
+            await waitForRateLimit();
+            response = await fetchWithTimeout(`${ORS_BASE_URL}/v2/directions/driving-car/geojson`, {
+              method: "POST",
+              headers: {
+                "Authorization": ORS_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "application/json, application/geo+json",
+              },
+              body: JSON.stringify({ coordinates }),
+            });
+          }
+
+          if (!response.ok) {
+            if (response.status === 429) {
+              return res.status(429).json({ error: "Limite de requisições atingido. Tente novamente em alguns minutos." });
+            }
+            return res.status(response.status).json({ error: "Erro no serviço de rotas" });
+          }
+        }
+
+        directionsData = await response.json();
+        await storage.setQueryCache({
+          key: directionsCacheKey,
+          type: "directions",
+          requestJson: { coordinates },
+          responseJson: directionsData,
+        });
+      }
+
+      const allRoutes = (directionsData.features || []) as GeoJSON.Feature<GeoJSON.LineString>[];
+      if (allRoutes.length === 0) {
+        return res.status(422).json({ error: "Não foi possível gerar rota" });
+      }
+
+      const route = allRoutes[0];
+      const alternativeRoutes = allRoutes.slice(1);
+      let corridor: GeoJSON.Feature<GeoJSON.Polygon>;
+
+      if (mode === "distance") {
+        const buffers: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
+        for (const routeFeature of allRoutes) {
+          const buffered = buffer(routeFeature, widthKm, { units: "kilometers" });
+          if (buffered) buffers.push(buffered as GeoJSON.Feature<GeoJSON.Polygon>);
+        }
+
+        if (buffers.length === 1) {
+          corridor = buffers[0];
+        } else {
+          let merged: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> = buffers[0];
+          for (let i = 1; i < buffers.length; i++) {
+            const unionResult = union(featureCollection([merged as GeoJSON.Feature<GeoJSON.Polygon>, buffers[i]]));
+            if (unionResult) merged = unionResult as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
+          }
+
+          if (merged.geometry.type === "MultiPolygon") {
+            const allCoords: number[][] = [];
+            for (const polyCoords of merged.geometry.coordinates) {
+              for (const ring of polyCoords) allCoords.push(...ring);
+            }
+            const hull = convex(multiPoint(allCoords as [number, number][]));
+            corridor = (hull ?? buffers[0]) as GeoJSON.Feature<GeoJSON.Polygon>;
+          } else {
+            corridor = merged as GeoJSON.Feature<GeoJSON.Polygon>;
+          }
+        }
+      } else {
+        const routeLength = length(route, { units: "kilometers" });
+        const numSamples = Math.max(2, Math.min(5, Math.ceil(routeLength / 50)));
+        const sampleDistance = routeLength / (numSamples - 1);
+        const isochrones: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
+
+        for (let i = 0; i < numSamples; i++) {
+          const sampledPoint = along(route, i * sampleDistance, { units: "kilometers" });
+          const [lon, lat] = sampledPoint.geometry.coordinates;
+          const cacheKey = createIsochroneCacheKey(lat, lon, timeMinutes);
+          const cachedIso = await storage.getQueryCache(cacheKey);
+
+          if (cachedIso) {
+            const feature = (cachedIso.responseJson as any)?.features?.[0];
+            if (feature) isochrones.push(feature as GeoJSON.Feature<GeoJSON.Polygon>);
+            continue;
+          }
+
+          if (!ORS_API_KEY) {
+            return res.status(500).json({ error: "Chave ORS não configurada" });
+          }
+
+          await waitForRateLimit();
+          const isoResponse = await fetchWithTimeout(`${ORS_BASE_URL}/v2/isochrones/driving-car`, {
+            method: "POST",
+            headers: {
+              "Authorization": ORS_API_KEY,
+              "Content-Type": "application/json",
+              "Accept": "application/json, application/geo+json",
+            },
+            body: JSON.stringify({ locations: [[lon, lat]], range: [timeMinutes * 60], range_type: "time" }),
+          });
+
+          if (!isoResponse.ok) {
+            continue;
+          }
+
+          const isoData = await isoResponse.json();
+          const feature = isoData?.features?.[0];
+          if (feature) {
+            isochrones.push(feature as GeoJSON.Feature<GeoJSON.Polygon>);
+            await storage.setQueryCache({
+              key: cacheKey,
+              type: "isochrone",
+              requestJson: { lat, lon, minutes: timeMinutes },
+              responseJson: isoData,
+            });
+          }
+        }
+
+        if (isochrones.length === 0) {
+          corridor = buffer(route, widthKm, { units: "kilometers" }) as GeoJSON.Feature<GeoJSON.Polygon>;
+        } else {
+          let merged: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> = isochrones[0];
+          for (let i = 1; i < isochrones.length; i++) {
+            const unionResult = union(featureCollection([merged as GeoJSON.Feature<GeoJSON.Polygon>, isochrones[i]]));
+            if (unionResult) merged = unionResult as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
+          }
+
+          if (merged.geometry.type === "MultiPolygon") {
+            const allCoords: number[][] = [];
+            for (const polyCoords of merged.geometry.coordinates) {
+              for (const ring of polyCoords) allCoords.push(...ring);
+            }
+            const hull = convex(multiPoint(allCoords as [number, number][]));
+            corridor = (hull ?? (buffer(route, widthKm, { units: "kilometers" }) as GeoJSON.Feature<GeoJSON.Polygon>));
+          } else {
+            corridor = merged as GeoJSON.Feature<GeoJSON.Polygon>;
+          }
+        }
+      }
+
+      const customers = await storage.getCustomers();
+      const insideCustomerIds = customers
+        .filter((customer) => customer.lat !== null && customer.lon !== null)
+        .filter((customer) => booleanPointInPolygon(point([customer.lon!, customer.lat!]), corridor))
+        .map((customer) => customer.id);
+
+      return res.json({ route, alternativeRoutes, corridor, insideCustomerIds });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return res.status(504).json({ error: "Timeout ao calcular corredor" });
+      }
+      console.error("Corridor analysis error:", error);
+      return res.status(500).json({ error: "Erro ao calcular corredor" });
     }
   });
 
