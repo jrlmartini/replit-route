@@ -173,8 +173,10 @@ export function MapView({
       marker.bindPopup(`
         <div style="min-width: 180px;">
           <strong style="font-size: 14px;">${customer.name}</strong>
-          <p style="margin: 4px 0; font-size: 12px; color: #666;">${customer.address}</p>
           <p style="margin: 4px 0; font-size: 12px; color: #666;">${customer.city}</p>
+          <p style="margin: 4px 0; font-size: 12px; color: #666;">
+            ${customer.lat?.toFixed(5)}, ${customer.lon?.toFixed(5)}
+          </p>
           <button 
             onclick="window.dispatchEvent(new CustomEvent('selectAsOrigin', { detail: '${customer.id}' }))"
             style="
